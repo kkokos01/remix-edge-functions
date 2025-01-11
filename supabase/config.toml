@@ -1,2 +1,14 @@
-[functions."generate-recipe"]
-runtime = "deno"
+# supabase/config.toml
+
+# 1) Add your Supabase Project Reference (Project ID) at the top:
+project_id = "tehwjzcwlejiuntymwal"
+
+# 2) [functions] block is optional, but recommended if you want to ignore or include certain paths.
+[functions]
+# Example: ignore any placeholder folders (optional)
+# ignore = ["supabase/functions/test-fn/**"]
+
+# 3) Add a block specifically for your function(s):
+[functions.generate-recipe]
+# Include the path to your function code
+include = ["supabase/functions/generate-recipe/**"]
