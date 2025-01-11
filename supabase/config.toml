@@ -1,3 +1,2 @@
-[functions]
-[functions.generate-recipe]
-verify_jwt = false
+[functions."generate-recipe"]
+runtime = "deno"
