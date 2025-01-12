@@ -1,79 +1,33 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
+////////////////////////////////////////////////////
+// 1. Basic CORS Setup
+////////////////////////////////////////////////////
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": 
+    "authorization, x-client-info, apikey, content-type",
 };
 
-// ---------------------
-// Claude Prompt (System)
-// ---------------------
-//
-// This is your new, strict schema prompt. We'll place it in the "system" role message
-// so Claude knows exactly how to format the JSON output.
-//
-// NOTE: Keep the triple backticks or quotes EXACT so Anthropic reads it cleanly.
+////////////////////////////////////////////////////
+// 2. System Prompt for "Modify" Flow
+////////////////////////////////////////////////////
+const CLAUDE_SYSTEM_PROMPT_MODIFY = `
+You are an AI that must respond with one valid JSON object only — no commentary, markdown, or explanations.
+The JSON must follow the same structure as the original recipe schema, with the same validation rules.
 
-const CLAUDE_SYSTEM_PROMPT = `
-You are an AI that must respond with one valid JSON object only — no commentary, markdown, or explanations. 
-The JSON must follow this exact structure and validation rules:
+Now your job is to modify an existing recipe. 
+You'll receive two things from the user:
+1) The existing recipe in JSON form (same schema).
+2) Additional instructions on how to change it.
 
-{
-  // Basic Information
-  "title": "string, required, max 200 chars",
-  "description": "string, required, max 2000 chars",
-  "author_id": "uuid or null",
-  "parent_recipe_id": "uuid or null",
-  
-  // Timing and Difficulty
-  "prep_time_minutes": "integer > 0, required",
-  "cook_time_minutes": "integer ≥ 0, required",
-  "difficulty": "integer 1-5, required (1 = easiest, 5 = hardest)",
-  "servings": "integer > 0, required",
-  
-  // Classification
-  "cuisine_type": "string, required, max 50 chars",
-  "meal_type": "string, required, max 50 chars",
-  "privacy_setting": "string enum: private|public, required",
-  "status": "string enum: draft|published, required",
-  "tags": ["string, max 50 chars per tag, max 20 tags"],
-  
-  // Stats (initialized to 0)
-  "view_count": 0,
-  "favorite_count": 0,
-  
-  // Nutritional Information (all required)
-  "calories_per_serving": "number ≥ 0",
-  "protein_grams": "number ≥ 0, precision: 0.1",
-  "carbs_grams": "number ≥ 0, precision: 0.1",
-  "fat_grams": "number ≥ 0, precision: 0.1",
-  
-  // Recipe Components
-  "ingredients": [
-    {
-      "ingredient_name": "string, required, max 200 chars",
-      "amount": "number > 0, required",
-      "unit": "string, required, max 20 chars",
-      "notes": "string or null, max 500 chars",
-      "is_optional": "boolean, required",
-      "display_order": "integer > 0, required"
-    }
-  ],
-  
-  "instructions": [
-    {
-      "step_number": "integer > 0, required",
-      "instruction_text": "string, required, max 1000 chars",
-      "time_required": "integer ≥ 0, required",
-      "critical_step": "boolean, required",
-      "equipment_needed": "string or null, max 200 chars"
-    }
-  ]
-}
-
-Return only valid JSON matching this schema exactly. No extra text or explanations.
+You must return a single JSON object following that same schema, but with modifications reflecting the user's instructions. 
+Return only valid JSON. No extra text.
 `;
 
+////////////////////////////////////////////////////
+// 3. Serve the Function
+////////////////////////////////////////////////////
 serve(async (req) => {
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
@@ -81,63 +35,83 @@ serve(async (req) => {
   }
 
   try {
-    // Extract the user's raw prompt from JSON body
-    const { prompt } = await req.json();
+    // (A) Optional: Auth check
+    // If you want to require a Bearer token:
+    // const authHeader = req.headers.get("Authorization");
+    // if (!authHeader) {
+    //   return new Response(
+    //     JSON.stringify({ error: "Missing authorization header" }),
+    //     { status: 401, headers: corsHeaders }
+    //   );
+    // }
 
-    // Build the message array for Claude
-    // - The first message is "system" role with the strict JSON schema prompt
-    // - The second message is "user" role with the user-provided recipe request
+    // (B) Parse user inputs
+    // expecting { priorRecipe: {...}, modifyPrompt: "some string" }
+    const { priorRecipe, modifyPrompt } = await req.json();
+
+    if (!priorRecipe) {
+      throw new Error("No priorRecipe provided for modification");
+    }
+
+    // (C) Build messages for Claude
     const messages = [
       {
         role: "system",
-        content: CLAUDE_SYSTEM_PROMPT.trim()
+        content: CLAUDE_SYSTEM_PROMPT_MODIFY.trim()
       },
       {
         role: "user",
-        content: `User request: "${prompt}"`
+        content: `
+Existing recipe JSON:
+${JSON.stringify(priorRecipe, null, 2)}
+
+User's modification request:
+"${modifyPrompt}"
+        `.trim()
       }
     ];
 
-    // Call Anthropics' API with your model + message structure
-    // Keep the rest of your code the same, just pass these messages
+    // (D) Call Anthropic’s API
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
-        "x-api-key": Deno.env.get("ANTHROPIC_API_KEY"),
+        "x-api-key": Deno.env.get("ANTHROPIC_API_KEY") || "",
         "Content-Type": "application/json",
         "anthropic-version": "2023-06-01"
       },
       body: JSON.stringify({
-        model: "claude-3-sonnet-20240229",     // your chosen model
+        model: "claude-3-sonnet-20240229", // or whichever Claude model
         messages,
-        max_tokens: 1024,                     // or adjust as you wish
-        temperature: 0.7                      // adjust sampling temperature as desired
+        max_tokens: 1024,
+        temperature: 0.7
       })
     });
 
+    if (!response.ok) {
+      throw new Error(`Anthropic API error: ${response.status} - ${response.statusText}`);
+    }
+
     const result = await response.json();
 
-    // According to your existing code, the text is found at: result.content[0].text
-    // We'll assume that's correct for your Anthropic integration
-    // We'll wrap it in { recipe: <the text> } as you were doing.
-
+    // (E) Return updated recipe as "modifiedRecipe"
+    // If your "generate" code returns { recipe: ... }, here we do:
     return new Response(
-      JSON.stringify({ recipe: result.content[0].text }),
+      JSON.stringify({ modifiedRecipe: result.content[0].text }),
       {
-        headers: { 
-          ...corsHeaders, 
-          "Content-Type": "application/json" 
+        headers: {
+          ...corsHeaders,
+          "Content-Type": "application/json"
         }
       }
     );
 
   } catch (error) {
-    console.error("Error:", error);
+    console.error("Error in modify-recipe:", error);
     return new Response(
-      JSON.stringify({ error: "Failed to generate recipe" }),
-      { 
+      JSON.stringify({ error: "Failed to modify recipe", details: String(error) }),
+      {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
-        status: 500 
+        status: 500
       }
     );
   }
