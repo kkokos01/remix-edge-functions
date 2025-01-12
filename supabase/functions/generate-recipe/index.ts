@@ -1,19 +1,17 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
+////////////////////////////////////////////////////
+// 1. Basic CORS Setup
+////////////////////////////////////////////////////
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": 
+    "authorization, x-client-info, apikey, content-type",
 };
 
-// ---------------------
-// Claude Prompt (System)
-// ---------------------
-//
-// This is your new, strict schema prompt. We'll place it in the "system" role message
-// so Claude knows exactly how to format the JSON output.
-//
-// NOTE: Keep the triple backticks or quotes EXACT so Anthropic reads it cleanly.
-
+////////////////////////////////////////////////////
+// 2. System Prompt for Claude
+////////////////////////////////////////////////////
 const CLAUDE_SYSTEM_PROMPT = `
 You are an AI that must respond with one valid JSON object only — no commentary, markdown, or explanations. 
 The JSON must follow this exact structure and validation rules:
@@ -74,6 +72,9 @@ The JSON must follow this exact structure and validation rules:
 Return only valid JSON matching this schema exactly. No extra text or explanations.
 `;
 
+////////////////////////////////////////////////////
+// 3. Serve the Function
+////////////////////////////////////////////////////
 serve(async (req) => {
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
@@ -81,12 +82,10 @@ serve(async (req) => {
   }
 
   try {
-    // Extract the user's raw prompt from JSON body
+    // (A) Parse user input from request body
     const { prompt } = await req.json();
 
-    // Build the message array for Claude
-    // - The first message is "system" role with the strict JSON schema prompt
-    // - The second message is "user" role with the user-provided recipe request
+    // (B) Build message array for Claude
     const messages = [
       {
         role: "system",
@@ -98,8 +97,7 @@ serve(async (req) => {
       }
     ];
 
-    // Call Anthropics' API with your model + message structure
-    // Keep the rest of your code the same, just pass these messages
+    // (C) Call Anthropics' API
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
@@ -108,19 +106,16 @@ serve(async (req) => {
         "anthropic-version": "2023-06-01"
       },
       body: JSON.stringify({
-        model: "claude-3-sonnet-20240229",     // your chosen model
+        model: "claude-3-sonnet-20240229", // or your chosen Claude model
         messages,
-        max_tokens: 1024,                     // or adjust as you wish
-        temperature: 0.7                      // adjust sampling temperature as desired
+        max_tokens: 1024,                  // adjust as desired
+        temperature: 0.7                   // adjust sampling as desired
       })
     });
 
     const result = await response.json();
 
-    // According to your existing code, the text is found at: result.content[0].text
-    // We'll assume that's correct for your Anthropic integration
-    // We'll wrap it in { recipe: <the text> } as you were doing.
-
+    // (D) Return JSON with the newly generated recipe
     return new Response(
       JSON.stringify({ recipe: result.content[0].text }),
       {
