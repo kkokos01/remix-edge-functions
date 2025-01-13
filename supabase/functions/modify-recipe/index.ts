@@ -1,18 +1,11 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
-/**
- *  CORS HEADERS - identical approach as generate
- */
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-/**
- * The system prompt: must preserve the same schema from priorRecipe,
- * only altering fields based on user instructions (modifyPrompt).
- */
 const CLAUDE_SYSTEM_PROMPT_MODIFY = `
 You are an AI that must respond with one valid JSON object only — no extra text or explanations.
 It must match the same strict schema as the original recipe:
@@ -59,20 +52,27 @@ Preserve the same fields, but update them per user's request. No extra commentar
 `.trim();
 
 serve(async (req) => {
-  // (A) CORS preflight
+  // A) Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  // (B) POST logic
+  // B) Enforce Bearer token
+  const authHeader = req.headers.get("Authorization");
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return new Response(JSON.stringify({ error: "Unauthorized (missing Bearer token)" }), {
+      headers: corsHeaders,
+      status: 401
+    });
+  }
+
   if (req.method === "POST") {
     try {
       const { priorRecipe, modifyPrompt } = await req.json();
       if (!priorRecipe) {
-        throw new Error("No priorRecipe provided. Must be full JSON from generate or last modify.");
+        throw new Error("No priorRecipe provided.");
       }
 
-      // 1) Build messages
       const messages = [
         { role: "system", content: CLAUDE_SYSTEM_PROMPT_MODIFY },
         {
@@ -81,17 +81,21 @@ serve(async (req) => {
 Existing recipe JSON:
 ${JSON.stringify(priorRecipe, null, 2)}
 
-User's modifications:
-"${modifyPrompt}"
+User's modifications: "${modifyPrompt}"
         `.trim()
         }
       ];
 
-      // 2) Call Anthropics
+      // Retrieve your ANTHROPIC_API_KEY again
+      const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
+      if (!anthropicKey) {
+        throw new Error("Missing ANTHROPIC_API_KEY in environment secrets.");
+      }
+
       const aiResp = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
-          "x-api-key": Deno.env.get("ANTHROPIC_API_KEY") || "",
+          "x-api-key": anthropicKey,
           "Content-Type": "application/json",
           "anthropic-version": "2023-06-01"
         },
@@ -108,7 +112,6 @@ User's modifications:
       }
 
       const aiJson = await aiResp.json();
-      // 3) The new updated JSON
       const rawText = aiJson?.content?.[0]?.text || "{}";
 
       return new Response(rawText, {
@@ -117,7 +120,6 @@ User's modifications:
           "Content-Type": "application/json"
         }
       });
-
     } catch (err) {
       console.error("Error in modify-recipe:", err);
       return new Response(
@@ -130,7 +132,7 @@ User's modifications:
     }
   }
 
-  // (C) 405 if not POST/OPTIONS
+  // If not POST or OPTIONS, 405
   return new Response("Method not allowed", {
     headers: corsHeaders,
     status: 405
