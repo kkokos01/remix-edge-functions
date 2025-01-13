@@ -1,104 +1,99 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
-/**
- * CORS HEADERS
- */
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-/**
- * System prompt for modifying the existing JSON
- */
-const CLAUDE_SYSTEM_PROMPT_MODIFY = `
-You are an AI that must respond with one valid JSON object only — no extra text or explanations.
-It must match the same strict schema as the original recipe:
+const CLAUDE_SYSTEM_PROMPT = `
+You are an AI that modifies recipes. You must respond with one valid JSON object only — no commentary.
+You will receive the original recipe JSON and modification instructions.
+Preserve all fields while implementing the requested changes.
 
+The JSON must maintain this structure:
 {
-  // Basic Information
-  "title": "...",
-  "description": "...",
-  "author_id": "...",
-  "parent_recipe_id": "...",
-
-  // Timing and Difficulty
-  "prep_time_minutes": "...",
-  "cook_time_minutes": "...",
-  "difficulty": "...",
-  "servings": "...",
-
-  // Classification
-  "cuisine_type": "...",
-  "meal_type": "...",
-  "privacy_setting": "...",
-  "status": "...",
-  "tags": [...],
-
-  // Stats (initialized to 0)
-  "view_count": 0,
-  "favorite_count": 0,
-
-  // Nutritional Information
-  "calories_per_serving": "...",
-  "protein_grams": "...",
-  "carbs_grams": "...",
-  "fat_grams": "...",
-
-  // Recipe Components
-  "ingredients": [...],
-  "instructions": [...]
+  "title": "string, required, max 200 chars",
+  "description": "string, required, max 2000 chars",
+  "author_id": "same as input",
+  "parent_recipe_id": "same as input",
+  
+  "prep_time_minutes": "integer > 0",
+  "cook_time_minutes": "integer ≥ 0",
+  "difficulty": "integer 1-5",
+  "servings": "integer > 0",
+  
+  "cuisine_type": "string, max 50 chars",
+  "meal_type": "string, max 50 chars",
+  "privacy_setting": "private",
+  "status": "draft",
+  "tags": ["string array"],
+  
+  "view_count": "same as input",
+  "favorite_count": "same as input",
+  
+  "calories_per_serving": "number ≥ 0",
+  "protein_grams": "number ≥ 0",
+  "carbs_grams": "number ≥ 0",
+  "fat_grams": "number ≥ 0",
+  
+  "ingredients": [
+    {
+      "ingredient_name": "string",
+      "amount": "number > 0",
+      "unit": "string",
+      "notes": "string or null",
+      "is_optional": "boolean",
+      "display_order": "integer > 0"
+    }
+  ],
+  
+  "instructions": [
+    {
+      "step_number": "integer > 0",
+      "instruction_text": "string",
+      "time_required": "integer ≥ 0",
+      "critical_step": "boolean",
+      "equipment_needed": "string or null"
+    }
+  ]
 }
-
-You will receive:
-1) The entire prior recipe JSON
-2) The user's new instructions
-Preserve the same fields, but update them per user's request. No extra commentary.
 `.trim();
 
 serve(async (req) => {
-  // (A) Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  // (B) Enforce Bearer token
-  const authHeader = req.headers.get("Authorization");
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return new Response(JSON.stringify({ error: "Unauthorized: missing or invalid Bearer token" }), {
-      headers: corsHeaders,
-      status: 401
-    });
-  }
-
-  // (C) If POST, do modify logic
   if (req.method === "POST") {
     try {
       const { priorRecipe, modifyPrompt } = await req.json();
       if (!priorRecipe) {
-        throw new Error("No priorRecipe provided.");
+        throw new Error("No prior recipe provided");
+      }
+      if (!modifyPrompt) {
+        throw new Error("No modification prompt provided");
       }
 
       const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
       if (!anthropicKey) {
-        throw new Error("Missing ANTHROPIC_API_KEY in environment secrets");
+        throw new Error("Missing ANTHROPIC_API_KEY in environment");
       }
 
       const messages = [
-        { role: "system", content: CLAUDE_SYSTEM_PROMPT_MODIFY },
+        { role: "system", content: CLAUDE_SYSTEM_PROMPT },
         {
           role: "user",
           content: `
-Existing recipe JSON:
+Original recipe:
 ${JSON.stringify(priorRecipe, null, 2)}
 
-User's modifications: "${modifyPrompt}"
+Modification request: "${modifyPrompt}"
           `.trim()
         }
       ];
 
-      const aiResp = await fetch("https://api.anthropic.com/v1/messages", {
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
           "x-api-key": anthropicKey,
@@ -113,32 +108,35 @@ User's modifications: "${modifyPrompt}"
         })
       });
 
-      if (!aiResp.ok) {
-        throw new Error(`AI call error: ${aiResp.status} ${aiResp.statusText}`);
+      if (!response.ok) {
+        throw new Error(`Anthropic API error: ${response.status}`);
       }
 
-      const aiJson = await aiResp.json();
-      const rawText = aiJson?.content?.[0]?.text || "{}";
+      const result = await response.json();
+      const modifiedRecipeJson = result?.content?.[0]?.text || "{}";
 
-      return new Response(rawText, {
+      return new Response(modifiedRecipeJson, {
         headers: {
           ...corsHeaders,
           "Content-Type": "application/json"
         }
       });
-    } catch (err) {
-      console.error("Error in modify-recipe:", err);
+
+    } catch (error) {
+      console.error("Error modifying recipe:", error);
       return new Response(
-        JSON.stringify({ error: String(err) }),
+        JSON.stringify({ error: error.message }),
         {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          headers: {
+            ...corsHeaders,
+            "Content-Type": "application/json"
+          },
           status: 400
         }
       );
     }
   }
 
-  // (D) If not POST or OPTIONS, 405
   return new Response("Method not allowed", {
     headers: corsHeaders,
     status: 405
