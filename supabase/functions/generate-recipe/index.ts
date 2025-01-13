@@ -1,153 +1,120 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  // Project configuration
+  const SUPABASE_PROJECT_ID = 'tehwjzcwlejiuntymwal';
+  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRlaHdqemN3bGVqaXVudHltd2FsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzY0NjMzMDAsImV4cCI6MjA1MjAzOTMwMH0.TDGkirSHadkUjImAr2dRKHcsiscZQqWoHJp6b3B31ko';
 
-// Define CORS headers for cross-origin requests
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
+  // State and DOM elements
+  let currentRecipeData = null;
+  const topForm = document.getElementById('generate-recipe-form');
+  const recipeContent = document.querySelector('.recipe-content');
+  const bottomPrompt = document.querySelector('.bottom-prompt');
+  const createBtn = document.querySelector('.create-button');
+  const modifyBtn = document.querySelector('.modify-button');
 
-// Define the modification prompt for Claude
-const CLAUDE_SYSTEM_PROMPT = `
-You are an AI that modifies recipes. You must respond with one valid JSON object only — no commentary.
-You will receive the original recipe JSON and modification instructions.
-Preserve all fields while implementing the requested changes.
-
-The JSON must maintain this structure:
-{
-  "title": "string, required, max 200 chars",
-  "description": "string, required, max 2000 chars",
-  "author_id": "same as input",
-  "parent_recipe_id": "same as input",
-  
-  "prep_time_minutes": "integer > 0",
-  "cook_time_minutes": "integer ≥ 0",
-  "difficulty": "integer 1-5",
-  "servings": "integer > 0",
-  
-  "cuisine_type": "string, max 50 chars",
-  "meal_type": "string, max 50 chars",
-  "privacy_setting": "private",
-  "status": "draft",
-  "tags": ["string array"],
-  
-  "view_count": "same as input",
-  "favorite_count": "same as input",
-  
-  "calories_per_serving": "number ≥ 0",
-  "protein_grams": "number ≥ 0",
-  "carbs_grams": "number ≥ 0",
-  "fat_grams": "number ≥ 0",
-  
-  "ingredients": [
-    {
-      "ingredient_name": "string",
-      "amount": "number > 0",
-      "unit": "string",
-      "notes": "string or null",
-      "is_optional": "boolean",
-      "display_order": "integer > 0"
+  // Display helper
+  function displayJSONOrMessage(dataOrMsg) {
+    if (!recipeContent) return;
+    if (typeof dataOrMsg === 'string') {
+      recipeContent.textContent = dataOrMsg;
+    } else {
+      recipeContent.textContent = JSON.stringify(dataOrMsg, null, 2);
     }
-  ],
-  
-  "instructions": [
-    {
-      "step_number": "integer > 0",
-      "instruction_text": "string",
-      "time_required": "integer ≥ 0",
-      "critical_step": "boolean",
-      "equipment_needed": "string or null"
-    }
-  ]
-}
-
-Return only the modified JSON matching this schema exactly.
-`.trim();
-
-serve(async (req) => {
-  // Handle CORS preflight requests
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
   }
 
-  // Handle POST requests for recipe modification
-  if (req.method === "POST") {
+  // API call helper
+  async function callEdgeFunction(functionName, payload) {
     try {
-      // Parse the request body
-      const { priorRecipe, modifyPrompt } = await req.json();
-      if (!priorRecipe || !modifyPrompt) {
-        throw new Error("Missing required fields: priorRecipe and modifyPrompt");
-      }
-
-      // Get the Anthropic API key from environment variables
-      const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
-      if (!anthropicKey) {
-        throw new Error("Missing ANTHROPIC_API_KEY in environment");
-      }
-
-      // Prepare the messages for Claude
-      const messages = [
-        { role: "system", content: CLAUDE_SYSTEM_PROMPT },
+      const response = await fetch(
+        `https://${SUPABASE_PROJECT_ID}.functions.supabase.co/${functionName}`,
         {
-          role: "user",
-          content: `
-Original recipe:
-${JSON.stringify(priorRecipe, null, 2)}
-
-Modification request: "${modifyPrompt}"
-          `.trim()
-        }
-      ];
-
-      // Call the Anthropic API
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "x-api-key": anthropicKey,
-          "Content-Type": "application/json",
-          "anthropic-version": "2023-06-01"
-        },
-        body: JSON.stringify({
-          model: "claude-3-sonnet-20240229",
-          messages,
-          max_tokens: 1024,
-          temperature: 0.7
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(`Anthropic API error: ${response.status}`);
-      }
-
-      const result = await response.json();
-      const modifiedRecipeJson = result?.content?.[0]?.text || "{}";
-
-      // Return the modified recipe
-      return new Response(modifiedRecipeJson, {
-        headers: {
-          ...corsHeaders,
-          "Content-Type": "application/json"
-        }
-      });
-
-    } catch (error) {
-      console.error("Error modifying recipe:", error);
-      return new Response(
-        JSON.stringify({ error: error.message }),
-        {
+          method: 'POST',
           headers: {
-            ...corsHeaders,
-            "Content-Type": "application/json"
+            'Content-Type': 'application/json',
+            'apikey': SUPABASE_ANON_KEY
           },
-          status: 400
+          body: JSON.stringify(payload)
         }
       );
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `API Error: ${response.status}`);
+      }
+
+      return response.json();
+    } catch (error) {
+      console.error(`Error calling ${functionName}:`, error);
+      throw error;
     }
   }
 
-  // Handle unsupported methods
-  return new Response("Method not allowed", {
-    headers: corsHeaders,
-    status: 405
-  });
+  // Handle recipe generation (top form)
+  if (topForm) {
+    topForm.addEventListener('submit', async function(e) {
+      e.preventDefault();
+      displayJSONOrMessage('Generating recipe...');
+
+      try {
+        const userPromptTextarea = topForm.querySelector('textarea');
+        const prompt = userPromptTextarea ? userPromptTextarea.value.trim() : '';
+        
+        if (!prompt) {
+          throw new Error('Please enter a recipe request');
+        }
+
+        const data = await callEdgeFunction('generate-recipe', { prompt });
+        currentRecipeData = data;
+        displayJSONOrMessage(data);
+      } catch (error) {
+        displayJSONOrMessage(`Error: ${error.message}`);
+      }
+    });
+  }
+
+  // Handle recipe generation (bottom bar)
+  if (createBtn && bottomPrompt) {
+    createBtn.addEventListener('click', async function() {
+      displayJSONOrMessage('Generating recipe...');
+
+      try {
+        const prompt = bottomPrompt.value.trim();
+        if (!prompt) {
+          throw new Error('Please enter a recipe request');
+        }
+
+        const data = await callEdgeFunction('generate-recipe', { prompt });
+        currentRecipeData = data;
+        displayJSONOrMessage(data);
+      } catch (error) {
+        displayJSONOrMessage(`Error: ${error.message}`);
+      }
+    });
+  }
+
+  // Handle recipe modification
+  if (modifyBtn && bottomPrompt) {
+    modifyBtn.addEventListener('click', async function() {
+      if (!currentRecipeData) {
+        displayJSONOrMessage('Please generate a recipe first before modifying.');
+        return;
+      }
+
+      displayJSONOrMessage('Modifying recipe...');
+
+      try {
+        const modifyPrompt = bottomPrompt.value.trim() || 'Surprise me with a fun twist!';
+        const data = await callEdgeFunction('modify-recipe', {
+          priorRecipe: currentRecipeData,
+          modifyPrompt: modifyPrompt
+        });
+
+        currentRecipeData = data;
+        displayJSONOrMessage(data);
+      } catch (error) {
+        displayJSONOrMessage(`Error: ${error.message}`);
+      }
+    });
+  }
 });
+</script>
