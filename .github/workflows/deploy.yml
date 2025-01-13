@@ -23,7 +23,7 @@ jobs:
       - name: Install supabase CLI
         run: |
           # Download and install the latest CLI in /usr/local/bin
-          curl -fsSL https://cli.supabase.io/install.sh | sh -s -- -b /usr/local/bin
+          curl -fsSL https://cli.supabase.com/install.sh | sh -s -- -b /usr/local/bin
           supabase --version  # Just to confirm it's installed
 
       # 4) Supabase Login (using your personal token in GitHub Secrets)
