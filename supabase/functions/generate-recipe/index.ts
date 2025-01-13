@@ -7,30 +7,32 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-// Define the schema requirements for Claude's response
+// Define the modification prompt for Claude
 const CLAUDE_SYSTEM_PROMPT = `
-You are an AI that must respond with one valid JSON object only — no commentary or explanations.
-The JSON must follow this exact structure and validation rules:
+You are an AI that modifies recipes. You must respond with one valid JSON object only — no commentary.
+You will receive the original recipe JSON and modification instructions.
+Preserve all fields while implementing the requested changes.
 
+The JSON must maintain this structure:
 {
   "title": "string, required, max 200 chars",
   "description": "string, required, max 2000 chars",
-  "author_id": null,
-  "parent_recipe_id": null,
+  "author_id": "same as input",
+  "parent_recipe_id": "same as input",
   
-  "prep_time_minutes": "integer > 0, required",
-  "cook_time_minutes": "integer ≥ 0, required",
-  "difficulty": "integer 1-5, required",
-  "servings": "integer > 0, required",
+  "prep_time_minutes": "integer > 0",
+  "cook_time_minutes": "integer ≥ 0",
+  "difficulty": "integer 1-5",
+  "servings": "integer > 0",
   
-  "cuisine_type": "string, required, max 50 chars",
-  "meal_type": "string, required, max 50 chars",
+  "cuisine_type": "string, max 50 chars",
+  "meal_type": "string, max 50 chars",
   "privacy_setting": "private",
   "status": "draft",
-  "tags": ["string array, max 50 chars per tag"],
+  "tags": ["string array"],
   
-  "view_count": 0,
-  "favorite_count": 0,
+  "view_count": "same as input",
+  "favorite_count": "same as input",
   
   "calories_per_serving": "number ≥ 0",
   "protein_grams": "number ≥ 0",
@@ -39,11 +41,11 @@ The JSON must follow this exact structure and validation rules:
   
   "ingredients": [
     {
-      "ingredient_name": "string, required",
+      "ingredient_name": "string",
       "amount": "number > 0",
-      "unit": "string, required",
+      "unit": "string",
       "notes": "string or null",
-      "is_optional": false,
+      "is_optional": "boolean",
       "display_order": "integer > 0"
     }
   ],
@@ -51,13 +53,15 @@ The JSON must follow this exact structure and validation rules:
   "instructions": [
     {
       "step_number": "integer > 0",
-      "instruction_text": "string, required",
+      "instruction_text": "string",
       "time_required": "integer ≥ 0",
       "critical_step": "boolean",
       "equipment_needed": "string or null"
     }
   ]
 }
+
+Return only the modified JSON matching this schema exactly.
 `.trim();
 
 serve(async (req) => {
@@ -66,13 +70,13 @@ serve(async (req) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  // Handle POST requests for recipe generation
+  // Handle POST requests for recipe modification
   if (req.method === "POST") {
     try {
       // Parse the request body
-      const { prompt } = await req.json();
-      if (!prompt) {
-        throw new Error("No prompt provided");
+      const { priorRecipe, modifyPrompt } = await req.json();
+      if (!priorRecipe || !modifyPrompt) {
+        throw new Error("Missing required fields: priorRecipe and modifyPrompt");
       }
 
       // Get the Anthropic API key from environment variables
@@ -84,7 +88,15 @@ serve(async (req) => {
       // Prepare the messages for Claude
       const messages = [
         { role: "system", content: CLAUDE_SYSTEM_PROMPT },
-        { role: "user", content: `Generate a recipe based on this request: "${prompt}"` }
+        {
+          role: "user",
+          content: `
+Original recipe:
+${JSON.stringify(priorRecipe, null, 2)}
+
+Modification request: "${modifyPrompt}"
+          `.trim()
+        }
       ];
 
       // Call the Anthropic API
@@ -108,10 +120,10 @@ serve(async (req) => {
       }
 
       const result = await response.json();
-      const recipeJson = result?.content?.[0]?.text || "{}";
+      const modifiedRecipeJson = result?.content?.[0]?.text || "{}";
 
-      // Return the generated recipe
-      return new Response(recipeJson, {
+      // Return the modified recipe
+      return new Response(modifiedRecipeJson, {
         headers: {
           ...corsHeaders,
           "Content-Type": "application/json"
@@ -119,7 +131,7 @@ serve(async (req) => {
       });
 
     } catch (error) {
-      console.error("Error generating recipe:", error);
+      console.error("Error modifying recipe:", error);
       return new Response(
         JSON.stringify({ error: error.message }),
         {
