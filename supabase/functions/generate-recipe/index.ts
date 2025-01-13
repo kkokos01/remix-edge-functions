@@ -1,120 +1,93 @@
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-  // Project configuration
-  const SUPABASE_PROJECT_ID = 'tehwjzcwlejiuntymwal';
-  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRlaHdqemN3bGVqaXVudHltd2FsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzY0NjMzMDAsImV4cCI6MjA1MjAzOTMwMH0.TDGkirSHadkUjImAr2dRKHcsiscZQqWoHJp6b3B31ko';
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
-  // State and DOM elements
-  let currentRecipeData = null;
-  const topForm = document.getElementById('generate-recipe-form');
-  const recipeContent = document.querySelector('.recipe-content');
-  const bottomPrompt = document.querySelector('.bottom-prompt');
-  const createBtn = document.querySelector('.create-button');
-  const modifyBtn = document.querySelector('.modify-button');
+// Enable CORS
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
 
-  // Display helper
-  function displayJSONOrMessage(dataOrMsg) {
-    if (!recipeContent) return;
-    if (typeof dataOrMsg === 'string') {
-      recipeContent.textContent = dataOrMsg;
-    } else {
-      recipeContent.textContent = JSON.stringify(dataOrMsg, null, 2);
-    }
+const CLAUDE_SYSTEM_PROMPT = `
+You are an AI that must respond with one valid JSON object only—no commentary...
+`.trim();
+
+serve(async (req) => {
+  // Handle preflight OPTIONS
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
   }
 
-  // API call helper
-  async function callEdgeFunction(functionName, payload) {
+  if (req.method === "POST") {
     try {
-      const response = await fetch(
-        `https://${SUPABASE_PROJECT_ID}.functions.supabase.co/${functionName}`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'apikey': SUPABASE_ANON_KEY
-          },
-          body: JSON.stringify(payload)
-        }
-      );
+      const { prompt } = await req.json();
+      if (!prompt) {
+        throw new Error("No prompt provided");
+      }
+
+      const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
+      if (!anthropicKey) {
+        throw new Error("Missing ANTHROPIC_API_KEY in environment");
+      }
+
+      // Build messages for Claude
+      const messages = [
+        { role: "system", content: CLAUDE_SYSTEM_PROMPT },
+        { role: "user", content: `Generate a recipe in valid JSON based on this request: "${prompt}"` }
+      ];
+
+      // Call Anthropic
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "x-api-key": anthropicKey,
+          "Content-Type": "application/json",
+          "anthropic-version": "2023-06-01"
+        },
+        body: JSON.stringify({
+          model: "claude-3-sonnet-20240229",
+          messages,
+          max_tokens: 1024,
+          temperature: 0.7
+        })
+      });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `API Error: ${response.status}`);
+        throw new Error(`Anthropic API error: ${response.status}`);
       }
 
-      return response.json();
+      const result = await response.json();
+      let recipeText = result?.content?.[0]?.text || "{}";
+
+      // Just in case, trim whitespace
+      recipeText = recipeText.trim();
+
+      // If the text is not valid JSON, you might parse/fix it. For now, we assume it's valid.
+      // Return the raw JSON with correct headers
+      return new Response(recipeText, {
+        headers: {
+          ...corsHeaders,
+          "Content-Type": "application/json"
+        },
+        status: 200
+      });
     } catch (error) {
-      console.error(`Error calling ${functionName}:`, error);
-      throw error;
+      console.error("Error generating recipe:", error);
+      return new Response(
+        JSON.stringify({ error: error.message }),
+        {
+          headers: {
+            ...corsHeaders,
+            "Content-Type": "application/json"
+          },
+          status: 400
+        }
+      );
     }
   }
 
-  // Handle recipe generation (top form)
-  if (topForm) {
-    topForm.addEventListener('submit', async function(e) {
-      e.preventDefault();
-      displayJSONOrMessage('Generating recipe...');
-
-      try {
-        const userPromptTextarea = topForm.querySelector('textarea');
-        const prompt = userPromptTextarea ? userPromptTextarea.value.trim() : '';
-        
-        if (!prompt) {
-          throw new Error('Please enter a recipe request');
-        }
-
-        const data = await callEdgeFunction('generate-recipe', { prompt });
-        currentRecipeData = data;
-        displayJSONOrMessage(data);
-      } catch (error) {
-        displayJSONOrMessage(`Error: ${error.message}`);
-      }
-    });
-  }
-
-  // Handle recipe generation (bottom bar)
-  if (createBtn && bottomPrompt) {
-    createBtn.addEventListener('click', async function() {
-      displayJSONOrMessage('Generating recipe...');
-
-      try {
-        const prompt = bottomPrompt.value.trim();
-        if (!prompt) {
-          throw new Error('Please enter a recipe request');
-        }
-
-        const data = await callEdgeFunction('generate-recipe', { prompt });
-        currentRecipeData = data;
-        displayJSONOrMessage(data);
-      } catch (error) {
-        displayJSONOrMessage(`Error: ${error.message}`);
-      }
-    });
-  }
-
-  // Handle recipe modification
-  if (modifyBtn && bottomPrompt) {
-    modifyBtn.addEventListener('click', async function() {
-      if (!currentRecipeData) {
-        displayJSONOrMessage('Please generate a recipe first before modifying.');
-        return;
-      }
-
-      displayJSONOrMessage('Modifying recipe...');
-
-      try {
-        const modifyPrompt = bottomPrompt.value.trim() || 'Surprise me with a fun twist!';
-        const data = await callEdgeFunction('modify-recipe', {
-          priorRecipe: currentRecipeData,
-          modifyPrompt: modifyPrompt
-        });
-
-        currentRecipeData = data;
-        displayJSONOrMessage(data);
-      } catch (error) {
-        displayJSONOrMessage(`Error: ${error.message}`);
-      }
-    });
-  }
+  // If not POST
+  return new Response("Method not allowed", {
+    headers: corsHeaders,
+    status: 405
+  });
 });
-</script>
