@@ -1,17 +1,16 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 /**
- *  CORS HEADERS - ensures your function can be called from another domain
+ * 1) CORS HEADERS
  */
 const corsHeaders = {
-  "Access-Control-Allow-Origin": "*", // or "https://remixapp.webflow.io" if you prefer a specific domain
+  "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
 /**
- * This is your existing strict JSON schema prompt.
- * We'll pass it to Claude or whichever AI via the system role.
+ * 2) STRICT SCHEMA PROMPT
  */
 const CLAUDE_SYSTEM_PROMPT = `
 You are an AI that must respond with one valid JSON object only — no commentary, markdown, or explanations.
@@ -73,25 +72,33 @@ The JSON must follow this exact structure and validation rules:
 Return only valid JSON matching this schema exactly. No extra text or explanations.
 `.trim();
 
-/**
- * MAIN: We serve the function, handling both OPTIONS and POST
- */
 serve(async (req) => {
-  // (A) Handle CORS preflight
+  // 1) Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  // (B) For POST requests, do normal logic
+  // 2) Enforce Bearer Token
+  //    If you'd like to require a specific token (like your Supabase anon key),
+  //    check it here. For now, we just check that *some* Authorization header is present.
+  const authHeader = req.headers.get("Authorization");
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return new Response(JSON.stringify({ error: "Unauthorized (missing Bearer token)" }), {
+      headers: corsHeaders,
+      status: 401
+    });
+  }
+
+  // 3) If method is POST, handle the main logic
   if (req.method === "POST") {
     try {
-      // 1) Parse the incoming request body
+      // A) Parse user prompt
       const { prompt } = await req.json();
       if (!prompt) {
         throw new Error("No prompt provided.");
       }
 
-      // 2) Build AI messages
+      // B) Prepare messages for Claude
       const messages = [
         {
           role: "system",
@@ -103,11 +110,18 @@ serve(async (req) => {
         }
       ];
 
-      // 3) Call Anthropics (example). If using OpenAI, adapt accordingly.
+      // C) Retrieve your Anthropic key from environment secrets
+      const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
+      if (!anthropicKey) {
+        // If not found, throw error so user sees 400
+        throw new Error("Missing ANTHROPIC_API_KEY in environment secrets.");
+      }
+
+      // D) Call Anthropic
       const aiResp = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
-          "x-api-key": Deno.env.get("ANTHROPIC_API_KEY") || "",
+          "x-api-key": anthropicKey,
           "Content-Type": "application/json",
           "anthropic-version": "2023-06-01"
         },
@@ -124,10 +138,10 @@ serve(async (req) => {
       }
 
       const aiJson = await aiResp.json();
-      // 4) The raw JSON from Claude is presumably in aiJson.content[0].text
+      // E) The final JSON text from Claude is presumably in content[0].text
       const rawText = aiJson?.content?.[0]?.text || "{}";
 
-      // 5) Return that JSON directly
+      // F) Return it with the correct CORS
       return new Response(rawText, {
         headers: {
           ...corsHeaders,
@@ -147,7 +161,7 @@ serve(async (req) => {
     }
   }
 
-  // (C) If not POST or OPTIONS, return 405
+  // 4) If not POST or OPTIONS, 405
   return new Response("Method not allowed", {
     headers: corsHeaders,
     status: 405
