@@ -1,119 +1,94 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
-/**
- * 1) CORS HEADERS
- */
+// Define CORS headers for cross-origin requests
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-/**
- * 2) STRICT SCHEMA PROMPT
- *    (the same prompt you originally provided, ensuring fields match your DB schema)
- */
+// Define the schema requirements for Claude's response
 const CLAUDE_SYSTEM_PROMPT = `
-You are an AI that must respond with one valid JSON object only — no commentary, markdown, or explanations.
+You are an AI that must respond with one valid JSON object only — no commentary or explanations.
 The JSON must follow this exact structure and validation rules:
 
 {
-  // Basic Information
   "title": "string, required, max 200 chars",
   "description": "string, required, max 2000 chars",
-  "author_id": "uuid or null",
-  "parent_recipe_id": "uuid or null",
+  "author_id": null,
+  "parent_recipe_id": null,
   
-  // Timing and Difficulty
   "prep_time_minutes": "integer > 0, required",
   "cook_time_minutes": "integer ≥ 0, required",
-  "difficulty": "integer 1-5, required (1 = easiest, 5 = hardest)",
+  "difficulty": "integer 1-5, required",
   "servings": "integer > 0, required",
   
-  // Classification
   "cuisine_type": "string, required, max 50 chars",
   "meal_type": "string, required, max 50 chars",
-  "privacy_setting": "string enum: private|public, required",
-  "status": "string enum: draft|published, required",
-  "tags": ["string, max 50 chars per tag, max 20 tags"],
+  "privacy_setting": "private",
+  "status": "draft",
+  "tags": ["string array, max 50 chars per tag"],
   
-  // Stats (initialized to 0)
   "view_count": 0,
   "favorite_count": 0,
   
-  // Nutritional Information (all required)
   "calories_per_serving": "number ≥ 0",
-  "protein_grams": "number ≥ 0, precision: 0.1",
-  "carbs_grams": "number ≥ 0, precision: 0.1",
-  "fat_grams": "number ≥ 0, precision: 0.1",
+  "protein_grams": "number ≥ 0",
+  "carbs_grams": "number ≥ 0",
+  "fat_grams": "number ≥ 0",
   
-  // Recipe Components
   "ingredients": [
     {
-      "ingredient_name": "string, required, max 200 chars",
-      "amount": "number > 0, required",
-      "unit": "string, required, max 20 chars",
-      "notes": "string or null, max 500 chars",
-      "is_optional": "boolean, required",
-      "display_order": "integer > 0, required"
+      "ingredient_name": "string, required",
+      "amount": "number > 0",
+      "unit": "string, required",
+      "notes": "string or null",
+      "is_optional": false,
+      "display_order": "integer > 0"
     }
   ],
   
   "instructions": [
     {
-      "step_number": "integer > 0, required",
-      "instruction_text": "string, required, max 1000 chars",
-      "time_required": "integer ≥ 0, required",
-      "critical_step": "boolean, required",
-      "equipment_needed": "string or null, max 200 chars"
+      "step_number": "integer > 0",
+      "instruction_text": "string, required",
+      "time_required": "integer ≥ 0",
+      "critical_step": "boolean",
+      "equipment_needed": "string or null"
     }
   ]
 }
-
-Return only valid JSON matching this schema exactly. No extra text or explanations.
 `.trim();
 
-/**
- * Main server logic
- */
 serve(async (req) => {
-  // (A) Handle CORS preflight
+  // Handle CORS preflight requests
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  // (B) Enforce Bearer token if your function requires "Auth"
-  const authHeader = req.headers.get("Authorization");
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return new Response(JSON.stringify({ error: "Unauthorized: missing or invalid Bearer token" }), {
-      headers: corsHeaders,
-      status: 401
-    });
-  }
-
-  // (C) If method is POST, handle the normal logic
+  // Handle POST requests for recipe generation
   if (req.method === "POST") {
     try {
-      // 1) Parse the request body
+      // Parse the request body
       const { prompt } = await req.json();
       if (!prompt) {
         throw new Error("No prompt provided");
       }
 
-      // 2) Retrieve your Anthropic key from secrets
+      // Get the Anthropic API key from environment variables
       const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
       if (!anthropicKey) {
-        throw new Error("Missing ANTHROPIC_API_KEY in your environment secrets");
+        throw new Error("Missing ANTHROPIC_API_KEY in environment");
       }
 
-      // 3) Build messages for Claude
+      // Prepare the messages for Claude
       const messages = [
         { role: "system", content: CLAUDE_SYSTEM_PROMPT },
-        { role: "user", content: `User request: "${prompt}"` }
+        { role: "user", content: `Generate a recipe based on this request: "${prompt}"` }
       ];
 
-      // 4) Call the AI
-      const aiResp = await fetch("https://api.anthropic.com/v1/messages", {
+      // Call the Anthropic API
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
           "x-api-key": anthropicKey,
@@ -128,35 +103,37 @@ serve(async (req) => {
         })
       });
 
-      if (!aiResp.ok) {
-        throw new Error(`AI call error: ${aiResp.status} ${aiResp.statusText}`);
+      if (!response.ok) {
+        throw new Error(`Anthropic API error: ${response.status}`);
       }
 
-      const aiJson = await aiResp.json();
-      // The raw JSON from Claude presumably is in aiJson.content[0].text
-      const rawText = aiJson?.content?.[0]?.text || "{}";
+      const result = await response.json();
+      const recipeJson = result?.content?.[0]?.text || "{}";
 
-      // 5) Return that raw JSON
-      return new Response(rawText, {
+      // Return the generated recipe
+      return new Response(recipeJson, {
         headers: {
           ...corsHeaders,
           "Content-Type": "application/json"
         }
       });
 
-    } catch (err) {
-      console.error("Error in generate-recipe:", err);
+    } catch (error) {
+      console.error("Error generating recipe:", error);
       return new Response(
-        JSON.stringify({ error: String(err) }),
+        JSON.stringify({ error: error.message }),
         {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          headers: {
+            ...corsHeaders,
+            "Content-Type": "application/json"
+          },
           status: 400
         }
       );
     }
   }
 
-  // (D) If not POST or OPTIONS, 405
+  // Handle unsupported methods
   return new Response("Method not allowed", {
     headers: corsHeaders,
     status: 405
