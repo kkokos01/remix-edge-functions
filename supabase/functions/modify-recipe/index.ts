@@ -1,11 +1,17 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
+/**
+ * CORS HEADERS
+ */
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+/**
+ * System prompt for modifying the existing JSON
+ */
 const CLAUDE_SYSTEM_PROMPT_MODIFY = `
 You are an AI that must respond with one valid JSON object only — no extra text or explanations.
 It must match the same strict schema as the original recipe:
@@ -52,25 +58,31 @@ Preserve the same fields, but update them per user's request. No extra commentar
 `.trim();
 
 serve(async (req) => {
-  // A) Handle CORS preflight
+  // (A) Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  // B) Enforce Bearer token
+  // (B) Enforce Bearer token
   const authHeader = req.headers.get("Authorization");
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return new Response(JSON.stringify({ error: "Unauthorized (missing Bearer token)" }), {
+    return new Response(JSON.stringify({ error: "Unauthorized: missing or invalid Bearer token" }), {
       headers: corsHeaders,
       status: 401
     });
   }
 
+  // (C) If POST, do modify logic
   if (req.method === "POST") {
     try {
       const { priorRecipe, modifyPrompt } = await req.json();
       if (!priorRecipe) {
         throw new Error("No priorRecipe provided.");
+      }
+
+      const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
+      if (!anthropicKey) {
+        throw new Error("Missing ANTHROPIC_API_KEY in environment secrets");
       }
 
       const messages = [
@@ -82,15 +94,9 @@ Existing recipe JSON:
 ${JSON.stringify(priorRecipe, null, 2)}
 
 User's modifications: "${modifyPrompt}"
-        `.trim()
+          `.trim()
         }
       ];
-
-      // Retrieve your ANTHROPIC_API_KEY again
-      const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
-      if (!anthropicKey) {
-        throw new Error("Missing ANTHROPIC_API_KEY in environment secrets.");
-      }
 
       const aiResp = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
@@ -132,7 +138,7 @@ User's modifications: "${modifyPrompt}"
     }
   }
 
-  // If not POST or OPTIONS, 405
+  // (D) If not POST or OPTIONS, 405
   return new Response("Method not allowed", {
     headers: corsHeaders,
     status: 405
