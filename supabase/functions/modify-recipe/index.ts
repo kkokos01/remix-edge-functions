@@ -1,9 +1,41 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
+// Add Access-Control-Allow-Methods
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
+
+serve(async (req) => {
+  // 1) Handle the preflight
+  if (req.method === "OPTIONS") {
+    // Return a 200 (OK) with the necessary CORS headers
+    return new Response("ok", { headers: corsHeaders });
+  }
+
+  // 2) For POST, do your normal logic:
+  try {
+    // ... read the JSON body, call your AI, etc. ...
+    // (Your existing prompt code remains the same)
+
+    // Return the raw JSON or however you're returning it
+    return new Response(rawText, {
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "application/json"
+      }
+    });
+  } catch (error) {
+    return new Response(
+      JSON.stringify({ error: String(error) }),
+      {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 500
+      }
+    );
+  }
+});
 
 // We'll reuse the same schema, but instruct the AI it must keep existing fields intact
 const CLAUDE_SYSTEM_PROMPT_MODIFY = `
