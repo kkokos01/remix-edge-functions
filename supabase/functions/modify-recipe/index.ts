@@ -1,36 +1,36 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
+// Define CORS headers
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+// Define schema for Claude
 const CLAUDE_SYSTEM_PROMPT = `
-You are an AI that modifies recipes. You must respond with one valid JSON object only — no commentary.
-You will receive the original recipe JSON and modification instructions.
-Preserve all fields while implementing the requested changes.
+You are an AI that must respond with one valid JSON object only — no commentary.
+The JSON must follow this exact structure and validation rules:
 
-The JSON must maintain this structure:
 {
   "title": "string, required, max 200 chars",
   "description": "string, required, max 2000 chars",
-  "author_id": "same as input",
-  "parent_recipe_id": "same as input",
+  "author_id": null,
+  "parent_recipe_id": null,
   
-  "prep_time_minutes": "integer > 0",
-  "cook_time_minutes": "integer ≥ 0",
-  "difficulty": "integer 1-5",
-  "servings": "integer > 0",
+  "prep_time_minutes": "integer > 0, required",
+  "cook_time_minutes": "integer ≥ 0, required",
+  "difficulty": "integer 1-5, required",
+  "servings": "integer > 0, required",
   
-  "cuisine_type": "string, max 50 chars",
-  "meal_type": "string, max 50 chars",
+  "cuisine_type": "string, required, max 50 chars",
+  "meal_type": "string, required, max 50 chars",
   "privacy_setting": "private",
   "status": "draft",
-  "tags": ["string array"],
+  "tags": ["string array, max 50 chars per tag"],
   
-  "view_count": "same as input",
-  "favorite_count": "same as input",
+  "view_count": 0,
+  "favorite_count": 0,
   
   "calories_per_serving": "number ≥ 0",
   "protein_grams": "number ≥ 0",
@@ -39,11 +39,11 @@ The JSON must maintain this structure:
   
   "ingredients": [
     {
-      "ingredient_name": "string",
+      "ingredient_name": "string, required",
       "amount": "number > 0",
-      "unit": "string",
+      "unit": "string, required",
       "notes": "string or null",
-      "is_optional": "boolean",
+      "is_optional": false,
       "display_order": "integer > 0"
     }
   ],
@@ -51,7 +51,7 @@ The JSON must maintain this structure:
   "instructions": [
     {
       "step_number": "integer > 0",
-      "instruction_text": "string",
+      "instruction_text": "string, required",
       "time_required": "integer ≥ 0",
       "critical_step": "boolean",
       "equipment_needed": "string or null"
@@ -61,18 +61,16 @@ The JSON must maintain this structure:
 `.trim();
 
 serve(async (req) => {
+  // Handle CORS
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
   if (req.method === "POST") {
     try {
-      const { priorRecipe, modifyPrompt } = await req.json();
-      if (!priorRecipe) {
-        throw new Error("No prior recipe provided");
-      }
-      if (!modifyPrompt) {
-        throw new Error("No modification prompt provided");
+      const { prompt } = await req.json();
+      if (!prompt) {
+        throw new Error("No prompt provided");
       }
 
       const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
@@ -82,15 +80,7 @@ serve(async (req) => {
 
       const messages = [
         { role: "system", content: CLAUDE_SYSTEM_PROMPT },
-        {
-          role: "user",
-          content: `
-Original recipe:
-${JSON.stringify(priorRecipe, null, 2)}
-
-Modification request: "${modifyPrompt}"
-          `.trim()
-        }
+        { role: "user", content: `Generate a recipe based on this request: "${prompt}"` }
       ];
 
       const response = await fetch("https://api.anthropic.com/v1/messages", {
@@ -113,9 +103,9 @@ Modification request: "${modifyPrompt}"
       }
 
       const result = await response.json();
-      const modifiedRecipeJson = result?.content?.[0]?.text || "{}";
+      const recipeJson = result?.content?.[0]?.text || "{}";
 
-      return new Response(modifiedRecipeJson, {
+      return new Response(recipeJson, {
         headers: {
           ...corsHeaders,
           "Content-Type": "application/json"
@@ -123,7 +113,7 @@ Modification request: "${modifyPrompt}"
       });
 
     } catch (error) {
-      console.error("Error modifying recipe:", error);
+      console.error("Error generating recipe:", error);
       return new Response(
         JSON.stringify({ error: error.message }),
         {
