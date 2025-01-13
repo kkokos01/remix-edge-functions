@@ -11,6 +11,7 @@ const corsHeaders = {
 
 /**
  * 2) STRICT SCHEMA PROMPT
+ *    (the same prompt you originally provided, ensuring fields match your DB schema)
  */
 const CLAUDE_SYSTEM_PROMPT = `
 You are an AI that must respond with one valid JSON object only — no commentary, markdown, or explanations.
@@ -72,52 +73,46 @@ The JSON must follow this exact structure and validation rules:
 Return only valid JSON matching this schema exactly. No extra text or explanations.
 `.trim();
 
+/**
+ * Main server logic
+ */
 serve(async (req) => {
-  // 1) Handle CORS preflight
+  // (A) Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  // 2) Enforce Bearer Token
-  //    If you'd like to require a specific token (like your Supabase anon key),
-  //    check it here. For now, we just check that *some* Authorization header is present.
+  // (B) Enforce Bearer token if your function requires "Auth"
   const authHeader = req.headers.get("Authorization");
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return new Response(JSON.stringify({ error: "Unauthorized (missing Bearer token)" }), {
+    return new Response(JSON.stringify({ error: "Unauthorized: missing or invalid Bearer token" }), {
       headers: corsHeaders,
       status: 401
     });
   }
 
-  // 3) If method is POST, handle the main logic
+  // (C) If method is POST, handle the normal logic
   if (req.method === "POST") {
     try {
-      // A) Parse user prompt
+      // 1) Parse the request body
       const { prompt } = await req.json();
       if (!prompt) {
-        throw new Error("No prompt provided.");
+        throw new Error("No prompt provided");
       }
 
-      // B) Prepare messages for Claude
-      const messages = [
-        {
-          role: "system",
-          content: CLAUDE_SYSTEM_PROMPT
-        },
-        {
-          role: "user",
-          content: `User request: "${prompt}"`
-        }
-      ];
-
-      // C) Retrieve your Anthropic key from environment secrets
+      // 2) Retrieve your Anthropic key from secrets
       const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
       if (!anthropicKey) {
-        // If not found, throw error so user sees 400
-        throw new Error("Missing ANTHROPIC_API_KEY in environment secrets.");
+        throw new Error("Missing ANTHROPIC_API_KEY in your environment secrets");
       }
 
-      // D) Call Anthropic
+      // 3) Build messages for Claude
+      const messages = [
+        { role: "system", content: CLAUDE_SYSTEM_PROMPT },
+        { role: "user", content: `User request: "${prompt}"` }
+      ];
+
+      // 4) Call the AI
       const aiResp = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
@@ -138,10 +133,10 @@ serve(async (req) => {
       }
 
       const aiJson = await aiResp.json();
-      // E) The final JSON text from Claude is presumably in content[0].text
+      // The raw JSON from Claude presumably is in aiJson.content[0].text
       const rawText = aiJson?.content?.[0]?.text || "{}";
 
-      // F) Return it with the correct CORS
+      // 5) Return that raw JSON
       return new Response(rawText, {
         headers: {
           ...corsHeaders,
@@ -161,7 +156,7 @@ serve(async (req) => {
     }
   }
 
-  // 4) If not POST or OPTIONS, 405
+  // (D) If not POST or OPTIONS, 405
   return new Response("Method not allowed", {
     headers: corsHeaders,
     status: 405
