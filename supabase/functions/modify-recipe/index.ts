@@ -1,33 +1,36 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
-////////////////////////////////////////////////////
-// 1. Basic CORS Setup
-////////////////////////////////////////////////////
+/**
+ * Step 1: CORS Setup
+ */
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": 
-    "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-////////////////////////////////////////////////////
-// 2. System Prompt for "Modify" Flow
-////////////////////////////////////////////////////
+/**
+ * Step 2: HARDCODE your Supabase anon key here
+ * Use the same value as generate-recipe
+ */
+const HARDCODED_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRlaHdqemN3bGVqaXVudHltd2FsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzY0NjMzMDAsImV4cCI6MjA1MjAzOTMwMH0.TDGkirSHadkUjImAr2dRKHcsiscZQqWoHJp6b3B31ko";
+
+/**
+ * Step 3: Anthropic Key (unchanged)
+ */
+const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY") || "";
+
+/**
+ * Step 4: System Prompt for "Modify" Flow
+ */
 const CLAUDE_SYSTEM_PROMPT_MODIFY = `
 You are an AI that must respond with one valid JSON object only — no commentary, markdown, or explanations.
-The JSON must follow the same structure as the original recipe schema, with the same validation rules.
-
-Now your job is to modify an existing recipe. 
-You'll receive two things from the user:
-1) The existing recipe in JSON form (same schema).
-2) Additional instructions on how to change it.
-
-You must return a single JSON object following that same schema, but with modifications reflecting the user's instructions. 
+... (the same schema or instructions as generate, but referencing modifying) ...
 Return only valid JSON. No extra text.
 `;
 
-////////////////////////////////////////////////////
-// 3. Serve the Function
-////////////////////////////////////////////////////
+/**
+ * Step 5: Serve the Function
+ */
 serve(async (req) => {
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
@@ -35,29 +38,26 @@ serve(async (req) => {
   }
 
   try {
-    // (A) Optional: Auth check
-    // If you want to require a Bearer token:
-    // const authHeader = req.headers.get("Authorization");
-    // if (!authHeader) {
-    //   return new Response(
-    //     JSON.stringify({ error: "Missing authorization header" }),
-    //     { status: 401, headers: corsHeaders }
-    //   );
-    // }
+    // (A) Enforce Bearer Token Check
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader || authHeader !== `Bearer ${HARDCODED_SUPABASE_ANON_KEY}`) {
+      return new Response(
+        JSON.stringify({ error: "Unauthorized" }),
+        { status: 401, headers: corsHeaders }
+      );
+    }
 
     // (B) Parse user inputs
-    // expecting { priorRecipe: {...}, modifyPrompt: "some string" }
     const { priorRecipe, modifyPrompt } = await req.json();
-
     if (!priorRecipe) {
       throw new Error("No priorRecipe provided for modification");
     }
 
-    // (C) Build messages for Claude
+    // (C) Build messages for Anthropic
     const messages = [
       {
         role: "system",
-        content: CLAUDE_SYSTEM_PROMPT_MODIFY.trim()
+        content: CLAUDE_SYSTEM_PROMPT_MODIFY.trim(),
       },
       {
         role: "user",
@@ -67,24 +67,24 @@ ${JSON.stringify(priorRecipe, null, 2)}
 
 User's modification request:
 "${modifyPrompt}"
-        `.trim()
-      }
+      `.trim(),
+      },
     ];
 
-    // (D) Call Anthropic’s API
+    // (D) Call Anthropic's API
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
-        "x-api-key": Deno.env.get("ANTHROPIC_API_KEY") || "",
+        "x-api-key": anthropicKey, 
         "Content-Type": "application/json",
-        "anthropic-version": "2023-06-01"
+        "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-3-sonnet-20240229", // or whichever Claude model
+        model: "claude-3-sonnet-20240229",
         messages,
         max_tokens: 1024,
-        temperature: 0.7
-      })
+        temperature: 0.7,
+      }),
     });
 
     if (!response.ok) {
@@ -94,24 +94,22 @@ User's modification request:
     const result = await response.json();
 
     // (E) Return updated recipe as "modifiedRecipe"
-    // If your "generate" code returns { recipe: ... }, here we do:
     return new Response(
       JSON.stringify({ modifiedRecipe: result.content[0].text }),
       {
         headers: {
           ...corsHeaders,
-          "Content-Type": "application/json"
-        }
+          "Content-Type": "application/json",
+        },
       }
     );
-
   } catch (error) {
     console.error("Error in modify-recipe:", error);
     return new Response(
       JSON.stringify({ error: "Failed to modify recipe", details: String(error) }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
-        status: 500
+        status: 500,
       }
     );
   }
