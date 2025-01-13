@@ -2,37 +2,22 @@ name: Deploy Supabase Functions
 
 on:
   push:
-    branches: [ "main" ]
+    branches:
+      - main
 
 jobs:
-  deploy-edge-functions:
+  deploy:
     runs-on: ubuntu-latest
 
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROJECT_ID: tehwjzcwlejiuntymwal   # or your real project ref
+
     steps:
-      # 1) Check out your repo code
       - uses: actions/checkout@v3
 
-      # 2) Install Node.js (optional if you need Node for other tasks)
-      - name: Install Node.js
-        run: |
-          curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-          sudo apt-get install -y nodejs
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest  # or specify a version like "1.72.2"
 
-      # 3) Install Supabase CLI
-      #    This direct shell script approach is recommended by Supabase
-      - name: Install supabase CLI
-        run: |
-          # Download and install the latest CLI in /usr/local/bin
-          curl -fsSL https://cli.supabase.com/install.sh | sh -s -- -b /usr/local/bin
-          supabase --version  # Just to confirm it's installed
-
-      # 4) Supabase Login (using your personal token in GitHub Secrets)
-      - name: Supabase Login
-        run: supabase login --token ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-
-      # 5) Deploy your functions
-      - name: Deploy generate-recipe
-        run: supabase functions deploy generate-recipe
-
-      - name: Deploy modify-recipe
-        run: supabase functions deploy modify-recipe
+      - run: supabase functions deploy --project-ref $PROJECT_ID
