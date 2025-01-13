@@ -1,45 +1,20 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
-// Add Access-Control-Allow-Methods
+/**
+ *  CORS HEADERS - ensures your function can be called from another domain
+ */
 const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Origin": "*", // or "https://remixapp.webflow.io" if you prefer a specific domain
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-serve(async (req) => {
-  // 1) Handle the preflight
-  if (req.method === "OPTIONS") {
-    // Return a 200 (OK) with the necessary CORS headers
-    return new Response("ok", { headers: corsHeaders });
-  }
-
-  // 2) For POST, do your normal logic:
-  try {
-    // ... read the JSON body, call your AI, etc. ...
-    // (Your existing prompt code remains the same)
-
-    // Return the raw JSON or however you're returning it
-    return new Response(rawText, {
-      headers: {
-        ...corsHeaders,
-        "Content-Type": "application/json"
-      }
-    });
-  } catch (error) {
-    return new Response(
-      JSON.stringify({ error: String(error) }),
-      {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-        status: 500
-      }
-    );
-  }
-});
-
-// This is your existing strict schema prompt, unchanged:
+/**
+ * This is your existing strict JSON schema prompt.
+ * We'll pass it to Claude or whichever AI via the system role.
+ */
 const CLAUDE_SYSTEM_PROMPT = `
-You are an AI that must respond with one valid JSON object only — no commentary, markdown, or explanations. 
+You are an AI that must respond with one valid JSON object only — no commentary, markdown, or explanations.
 The JSON must follow this exact structure and validation rules:
 
 {
@@ -98,66 +73,83 @@ The JSON must follow this exact structure and validation rules:
 Return only valid JSON matching this schema exactly. No extra text or explanations.
 `.trim();
 
+/**
+ * MAIN: We serve the function, handling both OPTIONS and POST
+ */
 serve(async (req) => {
+  // (A) Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  try {
-    const { prompt } = await req.json();
-
-    // Build the message array for Claude
-    const messages = [
-      {
-        role: "system",
-        content: CLAUDE_SYSTEM_PROMPT
-      },
-      {
-        role: "user",
-        content: `User request: "${prompt}"`
+  // (B) For POST requests, do normal logic
+  if (req.method === "POST") {
+    try {
+      // 1) Parse the incoming request body
+      const { prompt } = await req.json();
+      if (!prompt) {
+        throw new Error("No prompt provided.");
       }
-    ];
 
-    // Call Anthropics' API (example code)
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": Deno.env.get("ANTHROPIC_API_KEY") || "",
-        "Content-Type": "application/json",
-        "anthropic-version": "2023-06-01"
-      },
-      body: JSON.stringify({
-        model: "claude-3-sonnet-20240229",  // your chosen model
-        messages,
-        max_tokens: 1024,
-        temperature: 0.7
-      })
-    });
+      // 2) Build AI messages
+      const messages = [
+        {
+          role: "system",
+          content: CLAUDE_SYSTEM_PROMPT
+        },
+        {
+          role: "user",
+          content: `User request: "${prompt}"`
+        }
+      ];
 
-    if (!response.ok) {
-      throw new Error(`Anthropic error: ${response.status} ${response.statusText}`);
+      // 3) Call Anthropics (example). If using OpenAI, adapt accordingly.
+      const aiResp = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "x-api-key": Deno.env.get("ANTHROPIC_API_KEY") || "",
+          "Content-Type": "application/json",
+          "anthropic-version": "2023-06-01"
+        },
+        body: JSON.stringify({
+          model: "claude-3-sonnet-20240229",
+          messages,
+          max_tokens: 1024,
+          temperature: 0.7
+        })
+      });
+
+      if (!aiResp.ok) {
+        throw new Error(`AI call error: ${aiResp.status} ${aiResp.statusText}`);
+      }
+
+      const aiJson = await aiResp.json();
+      // 4) The raw JSON from Claude is presumably in aiJson.content[0].text
+      const rawText = aiJson?.content?.[0]?.text || "{}";
+
+      // 5) Return that JSON directly
+      return new Response(rawText, {
+        headers: {
+          ...corsHeaders,
+          "Content-Type": "application/json"
+        }
+      });
+
+    } catch (err) {
+      console.error("Error in generate-recipe:", err);
+      return new Response(
+        JSON.stringify({ error: String(err) }),
+        {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 400
+        }
+      );
     }
-
-    const result = await response.json();
-    // For Claude's response, let's assume the actual JSON is in result.content[0].text
-    const rawText = result?.content?.[0]?.text || "{}";
-
-    // Return that raw JSON directly
-    return new Response(rawText, {
-      headers: { 
-        ...corsHeaders, 
-        "Content-Type": "application/json"
-      }
-    });
-
-  } catch (error) {
-    console.error("Error in generate-recipe:", error);
-    return new Response(
-      JSON.stringify({ error: "Failed to generate recipe", details: String(error) }),
-      {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-        status: 500
-      }
-    );
   }
+
+  // (C) If not POST or OPTIONS, return 405
+  return new Response("Method not allowed", {
+    headers: corsHeaders,
+    status: 405
+  });
 });
