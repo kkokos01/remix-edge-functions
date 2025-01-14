@@ -1,6 +1,5 @@
-# supabase/config.toml
-
 project_id = "tehwjzcwlejiuntymwal"
 
 [functions."generate-recipe"]
-path = "supabase/functions/generate-recipe"
+[functions."modify-recipe"]
+# No path line
