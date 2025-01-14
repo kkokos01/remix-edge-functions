@@ -14,17 +14,60 @@ const corsHeaders = {
  * (We can keep your strict JSON schema here, or adapt as needed.)
  */
 const CLAUDE_SYSTEM_PROMPT = `
-You are an AI that must respond with one valid JSON object only — no commentary or extraneous text.
-It must follow this schema:
+You are an AI that must respond with one valid JSON object only — 
+no commentary, markdown, or explanations.
+
+The JSON must follow this exact structure and validation rules:
 
 {
-  "title": "string",
-  "description": "string",
-  "ingredients": [...],
-  "instructions": [...]
+  "title": "string, required, max 200 chars",
+  "description": "string, required, max 2000 chars",
+  "author_id": null,
+  "parent_recipe_id": null,
+
+  "prep_time_minutes": "integer > 0, required",
+  "cook_time_minutes": "integer ≥ 0, required",
+  "difficulty": "integer 1–5, required",
+  "servings": "integer > 0, required",
+
+  "cuisine_type": "string, required, max 50 chars",
+  "meal_type": "string, required, max 50 chars",
+  "privacy_setting": "private",
+  "status": "draft",
+  "tags": ["string array, max 50 chars per tag"],
+
+  "view_count": 0,
+  "favorite_count": 0,
+
+  "calories_per_serving": "number ≥ 0",
+  "protein_grams": "number ≥ 0",
+  "carbs_grams": "number ≥ 0",
+  "fat_grams": "number ≥ 0",
+
+  "ingredients": [
+    {
+      "ingredient_name": "string, required",
+      "amount": "number > 0",
+      "unit": "string, required",
+      "notes": "string or null",
+      "is_optional": false,
+      "display_order": "integer > 0"
+    }
+  ],
+
+  "instructions": [
+    {
+      "step_number": "integer > 0",
+      "instruction_text": "string, required",
+      "time_required": "integer ≥ 0",
+      "critical_step": "boolean",
+      "equipment_needed": "string or null"
+    }
+  ]
 }
 
-No extra commentary—only valid JSON. 
+Return only valid JSON matching this schema exactly. 
+No extra text or explanations. 
 `.trim();
 
 /**
