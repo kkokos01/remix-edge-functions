@@ -28,7 +28,7 @@ const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY") || "";
  * but references priorRecipe + modifyPrompt in the user message.
  */
 const CLAUDE_SYSTEM_PROMPT_MODIFY = `
-You are an AI that must respond with one valid JSON object only — 
+You are an AI that generates recipes in a specific format and must respond with one valid JSON object only — 
 no commentary, markdown, or explanations.
 
 The JSON must follow this exact structure and validation rules (same as 'generate-recipe'):
