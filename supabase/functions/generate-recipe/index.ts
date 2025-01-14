@@ -14,8 +14,7 @@ const corsHeaders = {
  * (We can keep your strict JSON schema here, or adapt as needed.)
  */
 const CLAUDE_SYSTEM_PROMPT = `
-You are an AI that must respond with one valid JSON object only — 
-no commentary, markdown, or explanations.
+You are an AI tasked with creating a recipe that must respond with one valid JSON object only — no commentary, markdown, or explanations.
 
 The JSON must follow this exact structure and validation rules:
 
@@ -67,7 +66,7 @@ The JSON must follow this exact structure and validation rules:
 }
 
 Return only valid JSON matching this schema exactly. 
-No extra text or explanations. 
+No extra text or explanations.  
 `.trim();
 
 /**
