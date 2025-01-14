@@ -132,44 +132,44 @@ serve(async (req) => {
       },
     ];
 
-    // (D) Call Anthropic
+    // (D) Call Anthropic using Claude 3.5 Sonnet
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
         "x-api-key": anthropicKey,
         "Content-Type": "application/json",
-        "anthropic-version": "2023-06-01",
+        // updated version if needed:
+        "anthropic-version": "2023-10-01",
       },
       body: JSON.stringify({
-        model: "claude-3-sonnet-20240229",
+        model: "claude-3-5-sonnet-20241022",
         messages,
-        max_tokens: 1024,
+        max_tokens: 8192, // or 1024 if you prefer
         temperature: 0.7,
       }),
     });
 
     if (!response.ok) {
-      throw new Error(
-        `Anthropic API error: ${response.status} - ${response.statusText}`
-      );
+      // optionally capture the entire error body
+      const errorBody = await response.text();
+      console.error("Anthropic error body:", errorBody);
+      throw new Error(`Anthropic API error: ${response.status} - ${response.statusText}`);
     }
 
     const result = await response.json();
 
     // (E) Return the raw JSON from Claude
-    // We assume the JSON is in result.content[0].text.
-    // Adjust if your actual path differs.
     return new Response(result.content[0].text, {
-      headers: {
-        ...corsHeaders,
-        "Content-Type": "application/json",
-      },
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 200,
     });
   } catch (error) {
     console.error("Error in generate-recipe:", error);
     return new Response(
-      JSON.stringify({ error: "Failed to generate recipe", details: String(error) }),
+      JSON.stringify({
+        error: "Failed to generate recipe",
+        details: String(error),
+      }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 500,
