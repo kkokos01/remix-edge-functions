@@ -11,7 +11,7 @@ const corsHeaders = {
 
 /**
  * This is your updated prompt for Claude 3.5 Sonnet usage.
- * (We can keep your strict JSON schema here, or adapt as needed.)
+ * We keep your entire JSON schema instructions here, exactly.
  */
 const CLAUDE_SYSTEM_PROMPT = `
 You are an AI tasked with creating a recipe that must respond with one valid JSON object only — no commentary, markdown, or explanations.
@@ -93,17 +93,21 @@ serve(async (req) => {
         throw new Error("Missing ANTHROPIC_API_KEY in environment secrets.");
       }
 
-      // C) Build messages
-      const messages = [
-        {
-          role: "system",
-          content: CLAUDE_SYSTEM_PROMPT
-        },
-        {
-          role: "user",
-          content: `User request: "${prompt}"`
-        }
-      ];
+      // C) Build request JSON
+      // Notice we do NOT put { role: "system" } inside messages.
+      // Instead we add a top-level system: CLAUDE_SYSTEM_PROMPT
+      const bodyPayload = {
+        model: "claude-3-5-sonnet-20241022", // or "claude-3-5-sonnet-latest"
+        system: CLAUDE_SYSTEM_PROMPT,
+        messages: [
+          {
+            role: "user",
+            content: `User request: "${prompt}"`
+          }
+        ],
+        max_tokens: 1024,
+        temperature: 0.7
+      };
 
       // D) Call Anthropic with Claude 3.5 Sonnet
       const response = await fetch("https://api.anthropic.com/v1/messages", {
@@ -113,12 +117,7 @@ serve(async (req) => {
           "Content-Type": "application/json",
           "anthropic-version": "2023-06-01"
         },
-        body: JSON.stringify({
-          model: "claude-3-5-sonnet-20241022", // or claude-3-5-sonnet-latest
-          messages,
-          max_tokens: 1024,
-          temperature: 0.7
-        })
+        body: JSON.stringify(bodyPayload)
       });
 
       if (!response.ok) {
