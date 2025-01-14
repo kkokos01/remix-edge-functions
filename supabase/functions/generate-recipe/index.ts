@@ -1,179 +1,116 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 /**
- * Step 1: CORS Setup
+ * CORS HEADERS
  */
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
 /**
- * Step 2: HARDCODE your Supabase anon key here (No placeholders).
- */
-const HARDCODED_SUPABASE_ANON_KEY =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRlaHdqemN3bGVqaXVudHltd2FsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzY0NjMzMDAsImV4cCI6MjA1MjAzOTMwMH0.TDGkirSHadkUjImAr2dRKHcsiscZQqWoHJp6b3B31ko";
-
-/**
- * Step 3: Anthropic Key (reads from Supabase environment variable)
- */
-const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY") || "";
-
-/**
- * Step 4: System Prompt for "Generate" Flow
- *
- * NOTE: This includes your full JSON schema. 
- * Modify if you want to adjust the shape/rules. 
+ * This is your updated prompt for Claude 3.5 Sonnet usage.
+ * (We can keep your strict JSON schema here, or adapt as needed.)
  */
 const CLAUDE_SYSTEM_PROMPT = `
-You are an AI that creates recipes in a very specific format, you must respond with one valid JSON object only — 
-no commentary, markdown, or explanations.
-
-The JSON must follow this exact structure and validation rules:
+You are an AI that must respond with one valid JSON object only — no commentary or extraneous text.
+It must follow this schema:
 
 {
-  "title": "string, required, max 200 chars",
-  "description": "string, required, max 2000 chars",
-  "author_id": null,
-  "parent_recipe_id": null,
-
-  "prep_time_minutes": "integer > 0, required",
-  "cook_time_minutes": "integer ≥ 0, required",
-  "difficulty": "integer 1–5, required",
-  "servings": "integer > 0, required",
-
-  "cuisine_type": "string, required, max 50 chars",
-  "meal_type": "string, required, max 50 chars",
-  "privacy_setting": "private",
-  "status": "draft",
-  "tags": ["string array, max 50 chars per tag"],
-
-  "view_count": 0,
-  "favorite_count": 0,
-
-  "calories_per_serving": "number ≥ 0",
-  "protein_grams": "number ≥ 0",
-  "carbs_grams": "number ≥ 0",
-  "fat_grams": "number ≥ 0",
-
-  "ingredients": [
-    {
-      "ingredient_name": "string, required",
-      "amount": "number > 0",
-      "unit": "string, required",
-      "notes": "string or null",
-      "is_optional": false,
-      "display_order": "integer > 0"
-    }
-  ],
-
-  "instructions": [
-    {
-      "step_number": "integer > 0",
-      "instruction_text": "string, required",
-      "time_required": "integer ≥ 0",
-      "critical_step": "boolean",
-      "equipment_needed": "string or null"
-    }
-  ]
+  "title": "string",
+  "description": "string",
+  "ingredients": [...],
+  "instructions": [...]
 }
 
-Return only valid JSON matching this schema exactly. 
-No extra text or explanations. 
+No extra commentary—only valid JSON. 
 `.trim();
 
 /**
- * Step 5: Serve the Function
+ * MAIN SERVE
  */
 serve(async (req) => {
-  // Handle CORS preflight
+  // 1) CORS preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  // Enforce POST
-  if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), {
-      status: 405,
-      headers: corsHeaders,
-    });
-  }
-
-  try {
-    // (A) Bearer Token Check
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader || authHeader !== `Bearer ${HARDCODED_SUPABASE_ANON_KEY}`) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: corsHeaders,
-      });
-    }
-
-    // (B) Parse user input (only "prompt")
-    const { prompt } = await req.json();
-    if (!prompt) {
-      return new Response(JSON.stringify({ error: "Missing field: prompt" }), {
-        status: 400,
-        headers: corsHeaders,
-      });
-    }
-
-    // (C) Prepare messages for Claude
-    const messages = [
-      {
-        role: "system",
-        content: CLAUDE_SYSTEM_PROMPT,
-      },
-      {
-        role: "user",
-        content: `User request (new recipe): "${prompt}"`,
-      },
-    ];
-
-    // (D) Call Anthropic using Claude 3.5 Sonnet
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": anthropicKey,
-        "Content-Type": "application/json",
-        // updated version if needed:
-        "anthropic-version": "2023-10-01",
-      },
-      body: JSON.stringify({
-        model: "claude-3-5-sonnet-20241022",
-        messages,
-        max_tokens: 8192, // or 1024 if you prefer
-        temperature: 0.7,
-      }),
-    });
-
-    if (!response.ok) {
-      // optionally capture the entire error body
-      const errorBody = await response.text();
-      console.error("Anthropic error body:", errorBody);
-      throw new Error(`Anthropic API error: ${response.status} - ${response.statusText}`);
-    }
-
-    const result = await response.json();
-
-    // (E) Return the raw JSON from Claude
-    return new Response(result.content[0].text, {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-      status: 200,
-    });
-  } catch (error) {
-    console.error("Error in generate-recipe:", error);
-    return new Response(
-      JSON.stringify({
-        error: "Failed to generate recipe",
-        details: String(error),
-      }),
-      {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-        status: 500,
+  // 2) If POST, do the generation
+  if (req.method === "POST") {
+    try {
+      // A) Parse the body
+      const { prompt } = await req.json();
+      if (!prompt) {
+        throw new Error("No 'prompt' field provided in JSON.");
       }
-    );
+
+      // B) Grab ANTHROPIC_API_KEY from environment
+      const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
+      if (!anthropicKey) {
+        throw new Error("Missing ANTHROPIC_API_KEY in environment secrets.");
+      }
+
+      // C) Build messages
+      const messages = [
+        {
+          role: "system",
+          content: CLAUDE_SYSTEM_PROMPT
+        },
+        {
+          role: "user",
+          content: `User request: "${prompt}"`
+        }
+      ];
+
+      // D) Call Anthropic with Claude 3.5 Sonnet
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "x-api-key": anthropicKey,
+          "Content-Type": "application/json",
+          "anthropic-version": "2023-06-01"
+        },
+        body: JSON.stringify({
+          model: "claude-3-5-sonnet-20241022", // or claude-3-5-sonnet-latest
+          messages,
+          max_tokens: 1024,
+          temperature: 0.7
+        })
+      });
+
+      if (!response.ok) {
+        const textErr = await response.text();
+        throw new Error(`Anthropic API error: ${response.status} - ${textErr}`);
+      }
+
+      // E) parse the text
+      const result = await response.json();
+      const rawText = result?.content?.[0]?.text || "{}";
+
+      return new Response(rawText, {
+        headers: {
+          ...corsHeaders,
+          "Content-Type": "application/json"
+        }
+      });
+
+    } catch (error) {
+      console.error("Error generating recipe:", error);
+      const errMsg = {
+        error: "Failed to generate recipe",
+        details: String(error)
+      };
+      return new Response(JSON.stringify(errMsg), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 500
+      });
+    }
   }
+
+  // 3) If not POST or OPTIONS, return 405
+  return new Response("Method not allowed", {
+    headers: corsHeaders,
+    status: 405
+  });
 });
