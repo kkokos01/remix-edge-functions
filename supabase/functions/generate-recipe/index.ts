@@ -14,9 +14,8 @@ const corsHeaders = {
  * We keep your entire JSON schema instructions here, exactly.
  */
 const CLAUDE_SYSTEM_PROMPT = `
-You are an AI tasked with creating a recipe that must respond with one valid JSON object only — no commentary, markdown, or explanations.
-
-The JSON must follow this exact structure and validation rules:
+You are an AI that must produce create a recipe and respond with one valid JSON object only — no commentary.
+The JSON must follow this structure. Return null for any fields you're unsure about:
 
 {
   "title": "string, required, max 200 chars",
@@ -73,43 +72,28 @@ No extra text or explanations.
  * MAIN SERVE
  */
 serve(async (req) => {
-  // 1) CORS preflight
+  // Handle CORS
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  // 2) If POST, do the generation
   if (req.method === "POST") {
     try {
-      // A) Parse the body
       const { prompt } = await req.json();
       if (!prompt) {
-        throw new Error("No 'prompt' field provided in JSON.");
+        throw new Error("No prompt provided");
       }
 
-      // B) Grab ANTHROPIC_API_KEY from environment
       const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
       if (!anthropicKey) {
-        throw new Error("Missing ANTHROPIC_API_KEY in environment secrets.");
+        throw new Error("Missing ANTHROPIC_API_KEY in environment");
       }
 
-      // C) Build request JSON
-      // Notice we do NOT put { role: "system" } inside messages.
-      // Instead we add a top-level system: CLAUDE_SYSTEM_PROMPT
-      const bodyPayload = {
-        model: "claude-3-5-sonnet-20241022", // or "claude-3-5-sonnet-latest"
-        system: CLAUDE_SYSTEM_PROMPT,
-        messages: [
-          {
-            role: "user",
-            content: `User request: "${prompt}"`
-          }
-        ],
-        max_tokens: 1024,
-        temperature: 0.7
-      };
+      const messages = [
+        { role: "system", content: CLAUDE_SYSTEM_PROMPT },
+        { role: "user", content: `Generate a recipe based on this request: "${prompt}"` }
+      ];
 
-      // D) Call Anthropic with Claude 3.5 Sonnet
       const response = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
@@ -117,19 +101,49 @@ serve(async (req) => {
           "Content-Type": "application/json",
           "anthropic-version": "2023-06-01"
         },
-        body: JSON.stringify(bodyPayload)
+        body: JSON.stringify({
+          model: "claude-3-sonnet-20240229",
+          messages,
+          max_tokens: 16384,
+          temperature: 0.5
+        })
       });
 
       if (!response.ok) {
-        const textErr = await response.text();
-        throw new Error(`Anthropic API error: ${response.status} - ${textErr}`);
+        throw new Error(`Anthropic API error: ${response.status}`);
       }
 
-      // E) parse the text
       const result = await response.json();
-      const rawText = result?.content?.[0]?.text || "{}";
+      const recipeText = result?.content?.[0]?.text || "{}";
 
-      return new Response(rawText, {
+      // Try to parse the JSON
+      let recipeData;
+      try {
+        recipeData = JSON.parse(recipeText);
+      } catch (error) {
+        // Return partial response with error indication
+        return new Response(JSON.stringify({
+          complete: false,
+          error: "Failed to parse recipe JSON",
+          raw: recipeText
+        }), {
+          headers: {
+            ...corsHeaders,
+            "Content-Type": "application/json"
+          },
+          status: 200  // Still return 200 since we're handling the error gracefully
+        });
+      }
+
+      // Check for required fields
+      const requiredFields = ["title", "description", "ingredients", "instructions"];
+      const missingFields = requiredFields.filter(field => !recipeData[field]);
+
+      return new Response(JSON.stringify({
+        complete: missingFields.length === 0,
+        data: recipeData,
+        missingFields: missingFields.length > 0 ? missingFields : undefined
+      }), {
         headers: {
           ...corsHeaders,
           "Content-Type": "application/json"
@@ -138,18 +152,22 @@ serve(async (req) => {
 
     } catch (error) {
       console.error("Error generating recipe:", error);
-      const errMsg = {
-        error: "Failed to generate recipe",
-        details: String(error)
-      };
-      return new Response(JSON.stringify(errMsg), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-        status: 500
-      });
+      return new Response(
+        JSON.stringify({ 
+          complete: false,
+          error: error.message 
+        }),
+        {
+          headers: {
+            ...corsHeaders,
+            "Content-Type": "application/json"
+          },
+          status: 400
+        }
+      );
     }
   }
 
-  // 3) If not POST or OPTIONS, return 405
   return new Response("Method not allowed", {
     headers: corsHeaders,
     status: 405
